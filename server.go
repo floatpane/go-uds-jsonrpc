@@ -114,17 +114,14 @@ func (s *Server) Serve(ctx context.Context, l net.Listener) error {
 	// Close the listener when ctx cancels so the Accept loop unblocks.
 	go func() {
 		<-ctx.Done()
-		l.Close() //nolint:errcheck
+		_ = l.Close()
 	}()
 
 	for {
 		conn, err := l.Accept()
 		if err != nil {
-			if ctx.Err() != nil {
-				return nil
-			}
-			if errors.Is(err, net.ErrClosed) {
-				return nil
+			if ctx.Err() != nil || errors.Is(err, net.ErrClosed) {
+				return nil //nolint:nilerr // expected shutdown
 			}
 			return fmt.Errorf("accept: %w", err)
 		}
@@ -141,7 +138,7 @@ func (s *Server) serveConn(ctx context.Context, c *Conn) {
 			s.logf("connection %s panic: %v\n%s", c.RemoteAddr(), r, debug.Stack())
 		}
 		s.removeClient(c)
-		c.Close() //nolint:errcheck
+		_ = c.Close()
 		s.hookMu.RLock()
 		fn := s.onDisconnect
 		s.hookMu.RUnlock()

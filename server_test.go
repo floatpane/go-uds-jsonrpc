@@ -17,7 +17,7 @@ import (
 func newUDSServer(t *testing.T) (*Server, net.Listener, string, func()) {
 	t.Helper()
 	dir := t.TempDir()
-	sock := filepath.Join(dir, "test.sock")
+	sock := filepath.Join(dir, "s")
 	l, err := net.Listen("unix", sock)
 	if err != nil {
 		t.Fatalf("listen: %v", err)
@@ -53,8 +53,7 @@ func TestServer_HandleRequestResponse(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go s.Serve(ctx, l) //nolint:errcheck
-
+	go s.Serve(ctx, l)
 	c := dialConn(t, sock)
 	defer c.Close()
 
@@ -88,8 +87,7 @@ func TestServer_MethodNotFound(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go s.Serve(ctx, l) //nolint:errcheck
-
+	go s.Serve(ctx, l)
 	c := dialConn(t, sock)
 	defer c.Close()
 
@@ -118,12 +116,13 @@ func TestServer_HandlerErrorForwardsCode(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go s.Serve(ctx, l) //nolint:errcheck
-
+	go s.Serve(ctx, l)
 	c := dialConn(t, sock)
 	defer c.Close()
 
-	c.Send(&Request{ID: 1, Method: "Boom"}) //nolint:errcheck
+	if err := c.Send(&Request{ID: 1, Method: "Boom"}); err != nil {
+		t.Fatal(err)
+	}
 	msg, err := c.ReceiveMessage()
 	if err != nil {
 		t.Fatal(err)
@@ -149,12 +148,13 @@ func TestServer_GenericErrorBecomesInternal(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go s.Serve(ctx, l) //nolint:errcheck
-
+	go s.Serve(ctx, l)
 	c := dialConn(t, sock)
 	defer c.Close()
 
-	c.Send(&Request{ID: 1, Method: "Boom"}) //nolint:errcheck
+	if err := c.Send(&Request{ID: 1, Method: "Boom"}); err != nil {
+		t.Fatal(err)
+	}
 	msg, err := c.ReceiveMessage()
 	if err != nil {
 		t.Fatal(err)
@@ -177,8 +177,7 @@ func TestServer_BroadcastReachesAllClients(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go s.Serve(ctx, l) //nolint:errcheck
-
+	go s.Serve(ctx, l)
 	a := dialConn(t, sock)
 	defer a.Close()
 	b := dialConn(t, sock)
@@ -207,8 +206,7 @@ func TestServer_DisconnectHookFires(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go s.Serve(ctx, l) //nolint:errcheck
-
+	go s.Serve(ctx, l)
 	c := dialConn(t, sock)
 	c.Close()
 

@@ -132,8 +132,8 @@ func TestConn_MultipleMessages(t *testing.T) {
 	defer server.Close()
 
 	go func() {
-		client.Send(&Request{ID: 1, Method: "A"}) //nolint:errcheck
-		client.Send(&Request{ID: 2, Method: "B"}) //nolint:errcheck
+		client.Send(&Request{ID: 1, Method: "A"})
+		client.Send(&Request{ID: 2, Method: "B"})
 	}()
 
 	msg1, err := server.ReceiveMessage()
