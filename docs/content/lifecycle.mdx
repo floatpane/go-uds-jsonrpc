@@ -1,0 +1,136 @@
+---
+title: Daemon Lifecycle
+---
+
+# Daemon Lifecycle
+
+A robust daemon has a predictable startup, a single instance, and a
+clean shutdown. The library gives you the four primitives that make
+that work — runtime dir, PID file, socket, signals — and stays out of
+your way for everything else.
+
+## Startup checklist
+
+1. **Create the runtime dir.** `EnsureRuntimeDir(app)` — idempotent,
+   0700, per-user.
+2. **Check for a running instance.** `IsRunning(PIDPath(app))` —
+   returns `(pid, true)` if a process with that PID is alive.
+3. **Write the PID file.** `WritePID(PIDPath(app))`.
+4. **Remove a stale socket.** `os.Remove(SocketPath(app))` — ignore
+   ENOENT.
+5. **Listen.** `net.Listen("unix", SocketPath(app))`, then
+   `os.Chmod(sock, 0700)` to lock it down.
+6. **Defer cleanup.** `defer RemovePID(...)`, `defer l.Close()`.
+7. **Wire signals.** `signal.NotifyContext(ctx, SIGINT, SIGTERM)` for
+   shutdown; `HandleSignals(...)` if you also need SIGHUP reload.
+8. **Serve.** `s.Serve(ctx, l)` — blocks until ctx cancels.
+
+```go
+func run() error {
+    const app = "myd"
+
+    if err := udsrpc.EnsureRuntimeDir(app); err != nil {
+        return err
+    }
+    pidPath := udsrpc.PIDPath(app)
+    if pid, running := udsrpc.IsRunning(pidPath); running {
+        return fmt.Errorf("already running (PID %d)", pid)
+    }
+    if err := udsrpc.WritePID(pidPath); err != nil {
+        return err
+    }
+    defer udsrpc.RemovePID(pidPath)
+
+    sock := udsrpc.SocketPath(app)
+    _ = os.Remove(sock)
+    l, err := net.Listen("unix", sock)
+    if err != nil {
+        return err
+    }
+    defer l.Close()
+    if err := os.Chmod(sock, 0700); err != nil {
+        return err
+    }
+
+    s := udsrpc.NewServer()
+    // … register handlers …
+
+    ctx, cancel := signal.NotifyContext(
+        context.Background(),
+        syscall.SIGINT, syscall.SIGTERM,
+    )
+    defer cancel()
+
+    // Optional: SIGHUP-driven config reload.
+    stop := udsrpc.HandleSignals(nil, func() {
+        // reload config, then:
+        s.Broadcast("ConfigReloaded", nil)
+    })
+    defer stop()
+
+    return s.Serve(ctx, l)
+}
+```
+
+## Shutdown
+
+When `ctx` cancels (SIGINT/SIGTERM), `Serve` closes the listener.
+In-flight handlers run to completion on their own goroutines — they
+are not interrupted unless you propagate `ctx` into them yourself.
+After `Serve` returns:
+
+- The deferred `l.Close()` unlinks the socket (it's a Unix socket;
+  the inode is removed by `net.Listener.Close`).
+- The deferred `RemovePID` unlinks the PID file.
+- The runtime dir is left in place — it's cheap, and a future restart
+  will reuse it.
+
+> [!TIP]
+> If a handler takes a long time and you want clients to know the
+> daemon is going down, broadcast `"ShuttingDown"` before letting
+> `cancel()` fire. Clients can drop their loops cleanly instead of
+> seeing `EOF` and reconnecting.
+
+## SIGHUP reload pattern
+
+A typical pattern: SIGHUP re-reads config from disk, applies new
+state, and emits a `ConfigReloaded` event so clients can re-fetch
+anything that depends on config.
+
+```go
+stop := udsrpc.HandleSignals(nil, func() {
+    cfg, err := loadConfig()
+    if err != nil {
+        log.Printf("reload failed: %v", err)
+        return
+    }
+    applyConfig(cfg)
+    s.Broadcast("ConfigReloaded", nil)
+})
+defer stop()
+```
+
+`HandleSignals` runs `onReload` in its own goroutine; if reload work
+is heavy, make it cancelable via your own context so a second SIGHUP
+during reload doesn't pile up handlers.
+
+## Single-instance correctness
+
+`IsRunning` is best-effort: a PID file can outlive its process (kill
+-9, OOM), and the OS can recycle PIDs. The library handles the simple
+cases:
+
+- **PID file missing** → not running.
+- **PID file present but process gone** → `IsRunning` returns false.
+- **PID file present and PID alive** → returns true. (May be a
+  *different* process that recycled the PID; rare on modern kernels
+  but possible.)
+
+For stricter guarantees, also try to acquire an exclusive `flock`
+on the PID file (`syscall.Flock(fd, LOCK_EX|LOCK_NB)`) — the library
+does not do this for you, but it composes cleanly.
+
+> [!IMPORTANT]
+> Always remove the socket file at startup before listening. Unix
+> sockets do not auto-clean on process exit; a hard crash leaves the
+> inode behind and `net.Listen` will fail with EADDRINUSE.

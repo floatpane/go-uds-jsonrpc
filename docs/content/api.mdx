@@ -1,0 +1,160 @@
+---
+title: API Reference
+---
+
+# API Reference
+
+Full reference on [pkg.go.dev](https://pkg.go.dev/github.com/floatpane/go-uds-jsonrpc).
+
+The library is split into a few small surfaces: protocol types, the
+`Conn` transport, the `Server`, and process-lifecycle helpers
+(socket paths, PID file, signals).
+
+## Protocol
+
+```go
+type Request struct {
+    ID     uint64
+    Method string
+    Params json.RawMessage
+}
+
+type Response struct {
+    ID     uint64
+    Result json.RawMessage // mutually exclusive with Error
+    Error  *Error
+}
+
+type Event struct {
+    Type string
+    Data json.RawMessage
+}
+
+type Error struct {
+    Code    int
+    Message string
+}
+
+type Message struct { // discriminated union
+    Request  *Request
+    Response *Response
+    Event    *Event
+}
+
+func DecodeMessage(raw json.RawMessage) (Message, error)
+```
+
+Standard error codes:
+
+| Constant              | Value     | Meaning |
+|-----------------------|-----------|---------|
+| `ErrCodeParse`        | `-32700`  | Invalid JSON received |
+| `ErrCodeInvalidReq`   | `-32600`  | Not a valid Request |
+| `ErrCodeNotFound`     | `-32601`  | Method not registered |
+| `ErrCodeInvalidParams`| `-32602`  | Method exists, params invalid |
+| `ErrCodeInternal`     | `-32603`  | Handler returned an error |
+
+## Conn
+
+```go
+type Conn struct { /* … */ }
+
+func NewConn(c net.Conn) *Conn
+func (c *Conn) Send(v interface{}) error
+func (c *Conn) SendResponse(id uint64, result interface{}) error
+func (c *Conn) SendError(id uint64, code int, message string) error
+func (c *Conn) SendEvent(eventType string, data interface{}) error
+func (c *Conn) ReceiveMessage() (Message, error)
+func (c *Conn) Close() error
+func (c *Conn) RemoteAddr() net.Addr
+func (c *Conn) LocalAddr() net.Addr
+```
+
+- `Send` is safe for concurrent use — writes are serialized with an
+  internal mutex.
+- `ReceiveMessage` is **not** safe for concurrent use; drive it from a
+  single reader goroutine.
+
+## Server
+
+```go
+type HandlerFunc func(ctx context.Context, conn *Conn, params json.RawMessage) (any, error)
+
+type Server struct {
+    Logger *log.Logger // accept errors + recovered panics; defaults to log.Default()
+}
+
+func NewServer() *Server
+func (s *Server) Handle(method string, fn HandlerFunc)
+func (s *Server) OnConnect(fn func(*Conn))
+func (s *Server) OnDisconnect(fn func(*Conn))
+func (s *Server) Clients() []*Conn
+func (s *Server) Broadcast(eventType string, data any)
+func (s *Server) BroadcastFunc(eventType string, data any, predicate func(*Conn) bool)
+func (s *Server) Serve(ctx context.Context, l net.Listener) error
+```
+
+Handler contract:
+
+- Return a value → wrapped as `Response.Result`.
+- Return `*Error` → `Code` / `Message` forwarded verbatim.
+- Return any other error → `ErrCodeInternal` + `err.Error()`.
+- Panic → `ErrCodeInternal` + `"handler panic"`, logged with stack.
+
+`Serve` blocks until `ctx` is canceled or the listener returns
+`net.ErrClosed`. On ctx cancel it closes the listener and returns `nil`.
+
+## Socket paths
+
+```go
+func RuntimeDir(appName string) string
+func SocketPath(appName string) string
+func PIDPath(appName string) string
+func EnsureRuntimeDir(appName string) error
+```
+
+Conventions:
+
+| Platform | RuntimeDir |
+|----------|------------|
+| Linux    | `$XDG_RUNTIME_DIR/<app>/` (fallback `/tmp/<app>-<uid>/`) |
+| macOS    | `~/Library/Caches/<app>/` |
+| other    | `os.TempDir()/<app>-<uid>/` |
+
+`SocketPath` is `<RuntimeDir>/<app>.sock` and `PIDPath` is
+`<RuntimeDir>/<app>.pid`.
+
+## PID file
+
+```go
+func WritePID(path string) error
+func ReadPID(path string) (int, error)
+func IsRunning(path string) (int, bool)
+func RemovePID(path string) error
+```
+
+`IsRunning` uses signal 0 on Unix and `OpenProcess` +
+`GetExitCodeProcess` on Windows. It returns `(pid, false)` for both
+"file missing" and "process gone" — callers don't need to distinguish.
+
+## Signals
+
+```go
+func HandleSignals(onShutdown, onReload func()) (stop func())
+```
+
+| Signal | Action |
+|--------|--------|
+| SIGTERM / SIGINT | `onShutdown()`, handler returns |
+| SIGHUP           | `onReload()`, handler stays |
+
+Either callback may be `nil`. On Windows, only `os.Interrupt` is
+observed and `onReload` is ignored.
+
+The returned `stop` detaches the handler without invoking
+`onShutdown`.
+
+> [!IMPORTANT]
+> Prefer `signal.NotifyContext` for new code — it integrates cleanly
+> with `Serve(ctx, l)`. `HandleSignals` exists for SIGHUP support and
+> for retrofitting older daemons.

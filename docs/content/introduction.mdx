@@ -1,0 +1,52 @@
+---
+title: Introduction
+---
+
+# go-uds-jsonrpc
+
+`go-uds-jsonrpc` is a tiny library for building local daemons in Go that
+talk to client processes over a Unix domain socket using newline-delimited
+JSON-RPC.
+
+It sits between `net/rpc` (too rigid, gob-only, no push) and gRPC (too
+heavy, IDL, codegen, HTTP/2) for the very common case of:
+
+> one daemon, several local clients, one machine.
+
+## Features
+
+- **Three message shapes on one stream.** Request (client → server),
+  Response (server → client), Event (server-pushed, no ack). All
+  serialized as one JSON object per `\n`-terminated line — debuggable
+  with `socat`, scriptable from any language.
+- **Server scaffolding.** Handler registry, panic recovery, OnConnect /
+  OnDisconnect hooks, `Broadcast`/`BroadcastFunc` for events,
+  context-driven shutdown.
+- **PID file + IsRunning.** Single-instance guard that works on Unix
+  (signal 0) and Windows (OpenProcess + GetExitCodeProcess).
+- **XDG-aware socket paths.** `$XDG_RUNTIME_DIR/<app>/<app>.sock` on
+  Linux, `~/Library/Caches/<app>/` on macOS, sensible fallback elsewhere.
+- **Signal handler.** SIGTERM/SIGINT → shutdown, SIGHUP → reload, wired
+  in one call.
+- **Zero dependencies.** stdlib only.
+
+## What this is not
+
+- **Not RPC for the open internet.** No TLS, no auth, no rate limiting.
+  Unix-socket permissions (`0700`) are the auth model. Same-user-only.
+- **Not a service mesh.** One listener, one process per daemon.
+- **Not JSON-RPC 2.0 compliant.** We borrow the error codes for
+  familiarity but use a leaner wire shape — no `"jsonrpc": "2.0"`
+  preamble, no batch arrays, no notifications-vs-requests distinction
+  beyond Event-vs-Request.
+
+## Sister projects
+
+| Project | Role |
+|---------|------|
+| [floatpane/matcha](https://github.com/floatpane/matcha) | Reference consumer — uses this library for its background mail daemon. |
+
+> [!NOTE]
+> The library is `udsrpc` when imported, but the module is
+> `github.com/floatpane/go-uds-jsonrpc`. Import as
+> `udsrpc "github.com/floatpane/go-uds-jsonrpc"`.

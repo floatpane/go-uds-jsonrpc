@@ -1,0 +1,157 @@
+---
+title: Getting Started
+---
+
+# Getting Started
+
+## Install
+
+```bash
+go get github.com/floatpane/go-uds-jsonrpc
+```
+
+Requires Go 1.26+.
+
+## A complete daemon
+
+```go
+package main
+
+import (
+    "context"
+    "encoding/json"
+    "log"
+    "net"
+    "os"
+    "os/signal"
+    "syscall"
+
+    udsrpc "github.com/floatpane/go-uds-jsonrpc"
+)
+
+const app = "myd"
+
+func main() {
+    if err := udsrpc.EnsureRuntimeDir(app); err != nil {
+        log.Fatal(err)
+    }
+    pidPath := udsrpc.PIDPath(app)
+    if pid, running := udsrpc.IsRunning(pidPath); running {
+        log.Fatalf("already running (PID %d)", pid)
+    }
+    if err := udsrpc.WritePID(pidPath); err != nil {
+        log.Fatal(err)
+    }
+    defer udsrpc.RemovePID(pidPath)
+
+    sock := udsrpc.SocketPath(app)
+    _ = os.Remove(sock)
+    l, err := net.Listen("unix", sock)
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer l.Close()
+    _ = os.Chmod(sock, 0700)
+
+    s := udsrpc.NewServer()
+    s.Handle("Ping", func(_ context.Context, _ *udsrpc.Conn, _ json.RawMessage) (any, error) {
+        return map[string]bool{"pong": true}, nil
+    })
+
+    ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+    defer cancel()
+
+    log.Printf("listening on %s", sock)
+    if err := s.Serve(ctx, l); err != nil {
+        log.Fatal(err)
+    }
+}
+```
+
+That's a complete daemon: single-instance, signal-aware, with one RPC
+method. Run it, then talk to it from another terminal:
+
+```bash
+echo '{"id":1,"method":"Ping"}' | socat - UNIX-CONNECT:$XDG_RUNTIME_DIR/myd/myd.sock
+# → {"id":1,"result":{"pong":true}}
+```
+
+## A client
+
+```go
+package main
+
+import (
+    "encoding/json"
+    "fmt"
+    "log"
+    "net"
+
+    udsrpc "github.com/floatpane/go-uds-jsonrpc"
+)
+
+func main() {
+    conn, err := net.Dial("unix", udsrpc.SocketPath("myd"))
+    if err != nil {
+        log.Fatal(err)
+    }
+    c := udsrpc.NewConn(conn)
+    defer c.Close()
+
+    if err := c.Send(&udsrpc.Request{ID: 1, Method: "Ping"}); err != nil {
+        log.Fatal(err)
+    }
+    msg, err := c.ReceiveMessage()
+    if err != nil {
+        log.Fatal(err)
+    }
+    if msg.Response.Error != nil {
+        log.Fatal(msg.Response.Error)
+    }
+    var result map[string]bool
+    json.Unmarshal(msg.Response.Result, &result)
+    fmt.Println("pong:", result["pong"])
+}
+```
+
+## Server-pushed events
+
+A daemon often needs to notify clients of out-of-band state changes —
+"new mail arrived", "build finished", "config reloaded". Use
+`Broadcast` for that:
+
+```go
+go func() {
+    for range time.Tick(5 * time.Second) {
+        s.Broadcast("Tick", map[string]int64{"unix": time.Now().Unix()})
+    }
+}()
+```
+
+On the client, the same `ReceiveMessage()` loop handles both Responses
+and Events — discriminate on `msg.Event != nil`:
+
+```go
+for {
+    msg, err := c.ReceiveMessage()
+    if err != nil {
+        return
+    }
+    switch {
+    case msg.Response != nil:
+        // correlate by msg.Response.ID
+    case msg.Event != nil:
+        switch msg.Event.Type {
+        case "Tick":
+            // ...
+        }
+    }
+}
+```
+
+> [!TIP]
+> Wrap `Conn` in a small client-side type that holds a map of pending
+> request IDs to result channels. The reader goroutine routes each
+> Response to its waiting caller, and Events to a dedicated event
+> channel. The library deliberately stays at the message level — that
+> demuxer is application-specific.
