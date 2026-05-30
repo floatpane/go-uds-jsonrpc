@@ -21,4 +21,3 @@ jobs:
           configuration-path: .github/pr-paths.yml
           sync-labels: false
           dot: true
-

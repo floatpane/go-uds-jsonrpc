@@ -3,6 +3,7 @@ on:
   schedule:
     - cron: "0 * * * *"
   workflow_dispatch:
+
 jobs:
   renovate:
     runs-on: ubuntu-latest
@@ -18,4 +19,3 @@ jobs:
           configurationFile: renovate.json
         env:
           RENOVATE_REPOSITORIES: floatpane/go-uds-jsonrpc
-
