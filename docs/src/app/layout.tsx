@@ -8,7 +8,11 @@ export const metadata: Metadata = {
 		"Tiny newline-delimited JSON-RPC over Unix domain sockets for Go. Daemon ↔ client with request/response + server-pushed events, PID files, and XDG-aware socket paths.",
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default function RootLayout({
+	children,
+}: {
+	children: React.ReactNode;
+}) {
 	return (
 		<html lang="en">
 			<body>
@@ -25,3 +29,5 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 		</html>
 	);
 }
+
+export const viewport = { width: "device-width", initialScale: 1 };

@@ -1,12 +1,12 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import remarkCallout from "@r4ai/remark-callout";
 import matter from "gray-matter";
 import { notFound } from "next/navigation";
 import { MDXRemote } from "next-mdx-remote/rsc";
-import remarkGfm from "remark-gfm";
-import remarkFrontmatter from "remark-frontmatter";
-import remarkCallout from "@r4ai/remark-callout";
 import rehypeHighlight from "rehype-highlight";
+import remarkFrontmatter from "remark-frontmatter";
+import remarkGfm from "remark-gfm";
 import { Sidebar } from "@/components/Sidebar";
 
 const CONTENT = path.join(process.cwd(), "content");
@@ -22,7 +22,9 @@ async function load(slug: string[]) {
 
 export default async function DocPage({
 	params,
-}: { params: Promise<{ slug: string[] }> }) {
+}: {
+	params: Promise<{ slug: string[] }>;
+}) {
 	const { slug } = await params;
 	const doc = await load(slug);
 	if (!doc) notFound();
