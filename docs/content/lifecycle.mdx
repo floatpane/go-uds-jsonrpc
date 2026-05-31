@@ -9,6 +9,17 @@ clean shutdown. The library gives you the four primitives that make
 that work — runtime dir, PID file, socket, signals — and stays out of
 your way for everything else.
 
+```mermaid
+stateDiagram-v2
+    [*] --> Starting
+    Starting --> AlreadyRunning: IsRunning() == true
+    AlreadyRunning --> [*]
+    Starting --> Serving: PID written, socket listening (0700)
+    Serving --> Serving: SIGHUP → reload + Broadcast(ConfigReloaded)
+    Serving --> ShuttingDown: SIGINT / SIGTERM cancels ctx
+    ShuttingDown --> [*]: close listener · RemovePID · unlink socket
+```
+
 ## Startup checklist
 
 1. **Create the runtime dir.** `EnsureRuntimeDir(app)` — idempotent,

@@ -330,3 +330,19 @@ main {
 		margin-left: 1rem;
 	}
 }
+/* Mermaid diagrams */
+.mermaid-diagram {
+	display: flex;
+	justify-content: center;
+	margin: 1.5rem 0;
+	padding: 1.25rem;
+	background: var(--surface);
+	border: 1px solid var(--border);
+	border-radius: 0.5rem;
+	overflow-x: auto;
+}
+.mermaid-diagram svg { max-width: 100%; height: auto; }
+.mermaid-error {
+	color: var(--callout-caution);
+	border-left: 3px solid var(--callout-caution);
+}

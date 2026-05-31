@@ -9,6 +9,16 @@ JSON object terminated by `\n` (the JSON encoder appends it; the
 decoder consumes it). No framing header, no length prefix, no batch
 arrays.
 
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant S as Server
+    C->>S: {"id":1,"method":"Ping","params":{}}
+    S-->>C: {"id":1,"result":{"pong":true}}
+    Note over S,C: server-pushed, unsolicited
+    S-->>C: {"type":"NewMail","data":{"account_id":"abc"}}
+```
+
 ## Message shapes
 
 ### Request
@@ -51,6 +61,15 @@ arrays.
 
 `DecodeMessage` reads the message and looks at the **top-level keys
 only**:
+
+```mermaid
+flowchart TD
+    raw([raw JSON object]) --> t{"has 'type'?"}
+    t -->|yes| ev[Event]
+    t -->|no| m{"has 'method'?"}
+    m -->|yes| rq[Request]
+    m -->|no| rs[Response]
+```
 
 1. If `type` is present → it's an Event.
 2. Else if `method` is present → it's a Request.
